@@ -92,25 +92,25 @@ func (r *IngressReconciler) reconcile(ctx context.Context, ingress *networkingv1
 	simps := []envoy.SimpleEnvoyConfig{}
 
 	for _, rule := range ingress.Spec.Rules {
-		svc := rule.HTTP.Paths[0].Backend.Service
-		port := svc.Port.Number
-		clusterName := fmt.Sprintf("%s||%d", svc.Name, port)
-		path := ingress.Spec.Rules[0].HTTP.Paths[0].Path
-		routeName := fmt.Sprintf("%s_route", svc.Name)
-		listenerName := fmt.Sprintf("%s_listener", svc)
+		for _, path := range rule.HTTP.Paths {
+			svc := path.Backend.Service
+			port := svc.Port.Number
+			clusterName := fmt.Sprintf("%s||%d", svc.Name, port)
+			path := path.Path
 
-		simps = append(simps, envoy.SimpleEnvoyConfig{
-			ClusterName:  clusterName,
-			Port:         uint32(port),
-			RouteName:    routeName,
-			PathPrefix:   path,
-			ListenerName: listenerName,
-		})
-
+			simps = append(simps, envoy.SimpleEnvoyConfig{
+				ClusterName: clusterName,
+				Port:        uint32(port),
+				PathPrefix:  path,
+			})
+		}
 	}
+
 	params := envoy.GenerateSnapshotParams{
 		Version:            version,
 		SimpleEnvoyConfigs: simps,
+		ListenerName:       envoy.ListenerName,
+		RouteName:          envoy.RouteName,
 	}
 
 	snapshot := envoy.GenerateSnapshot(params)

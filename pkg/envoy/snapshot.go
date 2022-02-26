@@ -36,7 +36,7 @@ const (
 	ClusterName  = "zach_cluster_name"
 	RouteName    = "local_route"
 	ListenerName = "listener_0"
-	ListenerPort = 10000
+	ListenerPort = 80
 	UpstreamHost = "localhost"
 	UpstreamPort = 18080
 )
@@ -77,29 +77,34 @@ func makeEndpoint(clusterName string, port uint32) *endpoint.ClusterLoadAssignme
 	}
 }
 
-func makeRoute(routeName string, clusterName string, pathPrefix string) *route.RouteConfiguration {
+func makeRoute(routeName string, simps []SimpleEnvoyConfig) *route.RouteConfiguration {
+	routes := []*route.Route{}
+	for _, simp := range simps {
+		routes = append(routes, &route.Route{
+			Match: &route.RouteMatch{
+				PathSpecifier: &route.RouteMatch_Prefix{
+					Prefix: simp.PathPrefix,
+				},
+			},
+			Action: &route.Route_Route{
+				Route: &route.RouteAction{
+					ClusterSpecifier: &route.RouteAction_Cluster{
+						Cluster: simp.ClusterName,
+					},
+					HostRewriteSpecifier: &route.RouteAction_HostRewriteLiteral{
+						HostRewriteLiteral: UpstreamHost,
+					},
+				},
+			},
+		})
+	}
+
 	return &route.RouteConfiguration{
 		Name: routeName,
 		VirtualHosts: []*route.VirtualHost{{
 			Name:    "local_service",
 			Domains: []string{"*"},
-			Routes: []*route.Route{{
-				Match: &route.RouteMatch{
-					PathSpecifier: &route.RouteMatch_Prefix{
-						Prefix: pathPrefix,
-					},
-				},
-				Action: &route.Route_Route{
-					Route: &route.RouteAction{
-						ClusterSpecifier: &route.RouteAction_Cluster{
-							Cluster: clusterName,
-						},
-						HostRewriteSpecifier: &route.RouteAction_HostRewriteLiteral{
-							HostRewriteLiteral: UpstreamHost,
-						},
-					},
-				},
-			}},
+			Routes:  routes,
 		}},
 	}
 }
@@ -167,16 +172,16 @@ func makeConfigSource() *core.ConfigSource {
 }
 
 type SimpleEnvoyConfig struct {
-	Port         uint32
-	ClusterName  string
-	PathPrefix   string
-	RouteName    string
-	ListenerName string
+	Port        uint32
+	ClusterName string
+	PathPrefix  string
 }
 
 type GenerateSnapshotParams struct {
 	Version            string
 	SimpleEnvoyConfigs []SimpleEnvoyConfig
+	RouteName          string
+	ListenerName       string
 }
 
 func GenerateSnapshot(params GenerateSnapshotParams) *cache.Snapshot {
@@ -185,9 +190,10 @@ func GenerateSnapshot(params GenerateSnapshotParams) *cache.Snapshot {
 
 	for _, simp := range params.SimpleEnvoyConfigs {
 		snapShotMap[resource.ClusterType] = append(snapShotMap[resource.ClusterType], makeCluster(simp.ClusterName, simp.Port))
-		snapShotMap[resource.RouteType] = append(snapShotMap[resource.RouteType], makeRoute(simp.RouteName, simp.ClusterName, simp.PathPrefix))
-		snapShotMap[resource.ListenerType] = append(snapShotMap[resource.ListenerType], makeHTTPListener(simp.ListenerName, simp.RouteName))
 	}
+
+	snapShotMap[resource.RouteType] = append(snapShotMap[resource.RouteType], makeRoute(params.RouteName, params.SimpleEnvoyConfigs))
+	snapShotMap[resource.ListenerType] = append(snapShotMap[resource.ListenerType], makeHTTPListener(params.ListenerName, params.RouteName))
 
 	snap, _ := cache.NewSnapshot(params.Version, snapShotMap)
 	return &snap

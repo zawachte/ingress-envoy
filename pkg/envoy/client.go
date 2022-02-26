@@ -40,15 +40,16 @@ func NewEnvoyServer() *EnvoyServer {
 func (es *EnvoyServer) Serve(ctx context.Context) error {
 	// Create the snapshot that we'll serve to Envoy
 	simp := SimpleEnvoyConfig{
-		ClusterName:  ClusterName,
-		Port:         uint32(1000),
-		RouteName:    RouteName,
-		PathPrefix:   "/",
-		ListenerName: ListenerName,
+		ClusterName: ClusterName,
+		Port:        uint32(1000),
+		PathPrefix:  "/",
 	}
+
 	params := GenerateSnapshotParams{
 		Version:            "1",
 		SimpleEnvoyConfigs: []SimpleEnvoyConfig{simp},
+		ListenerName:       ListenerName,
+		RouteName:          RouteName,
 	}
 
 	snapshot := GenerateSnapshot(params)
