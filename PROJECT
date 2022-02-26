@@ -1,0 +1,19 @@
+domain: k8s.io
+layout:
+- go.kubebuilder.io/v3
+projectName: ingress-envoy
+repo: k8s.io/ingress-envoy
+resources:
+- controller: true
+  domain: k8s.io
+  group: networking
+  kind: Ingress
+  path: k8s.io/api/networking/v1
+  version: v1
+- controller: true
+  domain: k8s.io
+  group: networking
+  kind: IngressClass
+  path: k8s.io/api/networking/v1
+  version: v1
+version: "3"
