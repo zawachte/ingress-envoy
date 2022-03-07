@@ -1,30 +1,35 @@
+# Base config for a split xDS management server on 18000, admin port on 19000
+admin:
+  access_log_path: /dev/null
+  address:
+    socket_address:
+      address: 127.0.0.1
+      port_value: 19000
+dynamic_resources:
+  cds_config:
+    resource_api_version: V3
+    api_config_source:
+      api_type: GRPC
+      transport_api_version: V3
+      grpc_services:
+      - envoy_grpc:
+          cluster_name: xds_cluster
+      set_node_on_first_message_only: true
+  lds_config:
+    resource_api_version: V3
+    api_config_source:
+      api_type: GRPC
+      transport_api_version: V3
+      grpc_services:
+      - envoy_grpc:
+          cluster_name: xds_cluster
+      set_node_on_first_message_only: true
 node:
   cluster: test-cluster
   id: test-id
-
-dynamic_resources:
-  ads_config:
-    api_type: GRPC
-    transport_api_version: V3
-    grpc_services:
-    - envoy_grpc:
-        cluster_name: xds_cluster
-  cds_config:
-    resource_api_version: V3
-    ads: {}
-  lds_config:
-    resource_api_version: V3
-    ads: {}
-
 static_resources:
   clusters:
-  - type: STRICT_DNS
-    typed_extension_protocol_options:
-      envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
-        "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
-        explicit_http_config:
-          http2_protocol_options: {}
-    name: xds_cluster
+  - connect_timeout: 1s
     load_assignment:
       cluster_name: xds_cluster
       endpoints:
@@ -32,11 +37,32 @@ static_resources:
         - endpoint:
             address:
               socket_address:
-                address: my-control-plane
+                address: 127.0.0.1
                 port_value: 18000
-
-admin:
-  address:
-    socket_address:
-      address: 0.0.0.0
-      port_value: 19000
+    http2_protocol_options: {}
+    name: xds_cluster
+  - connect_timeout: 1s
+    load_assignment:
+      cluster_name: als_cluster
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: 127.0.0.1
+                port_value: 18090
+    http2_protocol_options: {}
+    name: als_cluster
+layered_runtime:
+  layers:
+    - name: runtime-0
+      rtds_layer:
+        rtds_config:
+          resource_api_version: V3
+          api_config_source:
+            transport_api_version: V3
+            api_type: GRPC
+            grpc_services:
+              envoy_grpc:
+                cluster_name: xds_cluster
+        name: runtime-0

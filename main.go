@@ -23,6 +23,7 @@ import (
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
+
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -33,6 +34,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	"k8s.io/ingress-envoy/controllers"
+	envoydiscovery "k8s.io/ingress-envoy/pkg/discovery"
 	"k8s.io/ingress-envoy/pkg/envoy"
 	//+kubebuilder:scaffold:imports
 )
@@ -78,7 +80,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	envoyServer := envoy.NewEnvoyServer()
+	envoyServer := envoydiscovery.NewEnvoyServer()
 
 	if err = (&controllers.IngressReconciler{
 		Client: mgr.GetClient(),
@@ -111,6 +113,18 @@ func main() {
 			setupLog.Error(err, "problem running envoy xds server")
 			os.Exit(1)
 		}
+	}()
+
+	pc := envoy.ProxyConfig{
+		Filename: "test.yaml",
+	}
+
+	proxy := envoy.NewProxy(pc)
+
+	go func() {
+		err := proxy.Run(nil, 1, abortCh)
+		//proxy.Cleanup(epoch)
+		//a.statusCh <- exitStatus{epoch: epoch, err: err}
 	}()
 
 	setupLog.Info("starting manager")
