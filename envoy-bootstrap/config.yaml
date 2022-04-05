@@ -26,7 +26,7 @@ dynamic_resources:
       set_node_on_first_message_only: true
 node:
   cluster: test-cluster
-  id: test-id
+  id: ingress-envoy-0
 static_resources:
   clusters:
   - connect_timeout: 1s

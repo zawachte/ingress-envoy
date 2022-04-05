@@ -24,4 +24,10 @@ FROM envoyproxy/envoy:v1.20-latest
 WORKDIR /
 COPY --from=builder /workspace/manager .
 
+COPY envoy-bootstrap/config.yaml envoy_config.yaml
+
+RUN apt-get update
+RUN apt-get install curl -y
+RUN apt-get install net-tools -y 
+
 ENTRYPOINT ["/manager"]

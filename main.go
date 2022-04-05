@@ -54,8 +54,12 @@ func main() {
 	var metricsAddr string
 	var enableLeaderElection bool
 	var probeAddr string
+	var serviceMode bool
+	var nodeID string
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
+	flag.StringVar(&nodeID, "node-id", "ingress-envoy-0", "The node id")
+	flag.BoolVar(&serviceMode, "service-mode", false, "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
@@ -66,6 +70,36 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	envoyDiscoveryParams := envoydiscovery.EnvoyServerParams{
+		NodeID: nodeID,
+	}
+
+	envoyServer := envoydiscovery.NewEnvoyServer(envoyDiscoveryParams)
+
+	go func() {
+		err := envoyServer.Serve(context.Background())
+		if err != nil {
+			setupLog.Error(err, "problem running envoy xds server")
+			os.Exit(1)
+		}
+	}()
+
+	pc := envoy.ProxyConfig{
+		Filename: "envoy_config.yaml",
+	}
+
+	proxy := envoy.NewProxy(pc)
+	abortCh := make(chan error, 1)
+
+	go func() {
+		err := proxy.Run(nil, 1, abortCh)
+		if err != nil {
+			panic(err)
+		}
+		//proxy.Cleanup(epoch)
+		//a.statusCh <- exitStatus{epoch: epoch, err: err}
+	}()
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
@@ -80,11 +114,20 @@ func main() {
 		os.Exit(1)
 	}
 
-	envoyServer := envoydiscovery.NewEnvoyServer()
+	cli := mgr.GetClient()
+
+	err = controllers.ReconcilexDSVersionMap(context.TODO(), cli)
+	if err != nil {
+		setupLog.Error(err, "unable to create xds version config map", "controller", "Ingress")
+		os.Exit(1)
+	}
 
 	if err = (&controllers.IngressReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:        mgr.GetClient(),
+		Scheme:        mgr.GetScheme(),
+		NodeID:        nodeID,
+		SnapshotCache: envoyServer.GetSnapshotCache(),
+		ServiceMode:   serviceMode,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Ingress")
 		os.Exit(1)
@@ -106,26 +149,6 @@ func main() {
 		setupLog.Error(err, "unable to set up ready check")
 		os.Exit(1)
 	}
-
-	go func() {
-		err := envoyServer.Serve(context.Background())
-		if err != nil {
-			setupLog.Error(err, "problem running envoy xds server")
-			os.Exit(1)
-		}
-	}()
-
-	pc := envoy.ProxyConfig{
-		Filename: "test.yaml",
-	}
-
-	proxy := envoy.NewProxy(pc)
-
-	go func() {
-		err := proxy.Run(nil, 1, abortCh)
-		//proxy.Cleanup(epoch)
-		//a.statusCh <- exitStatus{epoch: epoch, err: err}
-	}()
 
 	setupLog.Info("starting manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {

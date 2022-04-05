@@ -28,12 +28,14 @@ type EnvoyServer struct {
 }
 
 type EnvoyServerParams struct {
+	NodeID string
 }
 
-func NewEnvoyServer() *EnvoyServer {
+func NewEnvoyServer(params EnvoyServerParams) *EnvoyServer {
 	cache := cache.NewSnapshotCache(false, cache.IDHash{}, nil)
 	return &EnvoyServer{
 		snapshotCache: cache,
+		nodeID:        params.NodeID,
 	}
 }
 
@@ -64,7 +66,7 @@ func (es *EnvoyServer) Serve(ctx context.Context) error {
 
 	cb := &test.Callbacks{}
 	srv := server.NewServer(ctx, es.snapshotCache, cb)
-	RunServer(ctx, srv, 1000)
+	RunServer(ctx, srv, 18000)
 
 	return nil
 }

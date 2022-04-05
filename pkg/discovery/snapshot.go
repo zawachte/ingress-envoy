@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	ClusterName  = "zach_cluster_name"
+	ClusterName  = "init_cluster"
 	RouteName    = "local_route"
 	ListenerName = "listener_0"
 	ListenerPort = 80
@@ -28,40 +28,48 @@ const (
 	UpstreamPort = 18080
 )
 
-func makeCluster(clusterName string, port uint32) *cluster.Cluster {
+func makeCluster(clusterName string, port uint32, endpoints []string) *cluster.Cluster {
 	return &cluster.Cluster{
 		Name:                 clusterName,
 		ConnectTimeout:       durationpb.New(5 * time.Second),
-		ClusterDiscoveryType: &cluster.Cluster_Type{Type: cluster.Cluster_LOGICAL_DNS},
+		ClusterDiscoveryType: &cluster.Cluster_Type{Type: cluster.Cluster_STATIC},
 		LbPolicy:             cluster.Cluster_ROUND_ROBIN,
-		LoadAssignment:       makeEndpoint(clusterName, port),
+		LoadAssignment:       makeEndpoint(clusterName, port, endpoints),
 		DnsLookupFamily:      cluster.Cluster_V4_ONLY,
 	}
 }
 
-func makeEndpoint(clusterName string, port uint32) *endpoint.ClusterLoadAssignment {
-	return &endpoint.ClusterLoadAssignment{
-		ClusterName: clusterName,
-		Endpoints: []*endpoint.LocalityLbEndpoints{{
-			LbEndpoints: []*endpoint.LbEndpoint{{
-				HostIdentifier: &endpoint.LbEndpoint_Endpoint{
-					Endpoint: &endpoint.Endpoint{
-						Address: &core.Address{
-							Address: &core.Address_SocketAddress{
-								SocketAddress: &core.SocketAddress{
-									Protocol: core.SocketAddress_TCP,
-									Address:  UpstreamHost,
-									PortSpecifier: &core.SocketAddress_PortValue{
-										PortValue: port,
-									},
+func makeEndpoint(clusterName string, port uint32, endpoints []string) *endpoint.ClusterLoadAssignment {
+
+	lbendpoints := []*endpoint.LbEndpoint{}
+
+	for _, ep := range endpoints {
+		lbendpoints = append(lbendpoints, &endpoint.LbEndpoint{
+			HostIdentifier: &endpoint.LbEndpoint_Endpoint{
+				Endpoint: &endpoint.Endpoint{
+					Address: &core.Address{
+						Address: &core.Address_SocketAddress{
+							SocketAddress: &core.SocketAddress{
+								Protocol: core.SocketAddress_TCP,
+								Address:  ep,
+								PortSpecifier: &core.SocketAddress_PortValue{
+									PortValue: port,
 								},
 							},
 						},
 					},
 				},
-			}},
+			},
+		})
+	}
+
+	return &endpoint.ClusterLoadAssignment{
+		ClusterName: clusterName,
+		Endpoints: []*endpoint.LocalityLbEndpoints{{
+			LbEndpoints: lbendpoints,
 		}},
 	}
+
 }
 
 func makeRoute(routeName string, simps []SimpleEnvoyConfig) *route.RouteConfiguration {
@@ -162,6 +170,7 @@ type SimpleEnvoyConfig struct {
 	Port        uint32
 	ClusterName string
 	PathPrefix  string
+	Endpoints   []string
 }
 
 type GenerateSnapshotParams struct {
@@ -176,7 +185,7 @@ func GenerateSnapshot(params GenerateSnapshotParams) *cache.Snapshot {
 	snapShotMap := make(map[resource.Type][]types.Resource)
 
 	for _, simp := range params.SimpleEnvoyConfigs {
-		snapShotMap[resource.ClusterType] = append(snapShotMap[resource.ClusterType], makeCluster(simp.ClusterName, simp.Port))
+		snapShotMap[resource.ClusterType] = append(snapShotMap[resource.ClusterType], makeCluster(simp.ClusterName, simp.Port, simp.Endpoints))
 	}
 
 	snapShotMap[resource.RouteType] = append(snapShotMap[resource.RouteType], makeRoute(params.RouteName, params.SimpleEnvoyConfigs))
