@@ -87,6 +87,7 @@ func main() {
 
 	pc := envoy.ProxyConfig{
 		Filename: "envoy_config.yaml",
+		Node:     nodeID,
 	}
 
 	proxy := envoy.NewProxy(pc)

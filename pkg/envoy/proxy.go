@@ -1,6 +1,7 @@
 package envoy
 
 import (
+	"html/template"
 	"net"
 	"os"
 	"os/exec"
@@ -66,6 +67,19 @@ func NewProxy(cfg ProxyConfig) Proxy {
 
 func (e *proxy) Run(config interface{}, epoch int, abort <-chan error) error {
 	// spin up a new Envoy process
+
+	ut, err := template.New(e.Filename).Parse(envoyTemplate)
+	if err != nil {
+		return err
+	}
+
+	f, err := os.Create(e.Filename)
+	if err != nil {
+		return err
+	}
+
+	err = ut.Execute(os.Stdout, u)
+
 	args := e.args(e.Filename, epoch)
 
 	/* #nosec */

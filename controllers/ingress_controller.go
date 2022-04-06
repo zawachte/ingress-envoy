@@ -46,7 +46,8 @@ type IngressReconciler struct {
 }
 
 const (
-	xDSVersionMapName = "version-map"
+	xDSVersionMapName    = "version-map"
+	xDSVersionMapKeyName = "version"
 )
 
 //+kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
@@ -92,54 +93,70 @@ func (r *IngressReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	return r.reconcile(ctx, ingress)
 }
 
-func (r *IngressReconciler) reconcile(ctx context.Context, ingress *networkingv1.Ingress) (ctrl.Result, error) {
-
-	// delta
+func (r *IngressReconciler) buildSimpleEnvoyConfig(ctx context.Context) (*envoy.GenerateSnapshotParams, error) {
 
 	version, err := r.getXDSVersionFromConfigMap(ctx)
 	if err != nil {
-		return ctrl.Result{}, err
+		return nil, err
 	}
 
 	simps := []envoy.SimpleEnvoyConfig{}
 
-	for _, rule := range ingress.Spec.Rules {
-		for _, path := range rule.HTTP.Paths {
-			svc := path.Backend.Service
-			port := svc.Port.Number
-			clusterName := fmt.Sprintf("%s||%d", svc.Name, port)
-			path := path.Path
+	ingressList, err := r.getAllIngresses(ctx)
+	if err != nil {
+		return nil, err
+	}
 
-			endpoints := []string{}
-			if r.ServiceMode {
-				endpoints, err = r.getServiceClusterIP(ctx, svc.Name, ingress.Namespace)
-				if err != nil {
-					continue
+	for _, ingress := range ingressList.Items {
+		for _, rule := range ingress.Spec.Rules {
+			for _, path := range rule.HTTP.Paths {
+				svc := path.Backend.Service
+				port := svc.Port.Number
+				clusterName := fmt.Sprintf("%s||%d", svc.Name, port)
+				path := path.Path
+
+				endpoints := []string{}
+				if r.ServiceMode {
+					endpoints, err = r.getServiceClusterIP(ctx, svc.Name, ingress.Namespace)
+					if err != nil {
+						continue
+					}
+				} else {
+					endpoints, err = r.getServiceEndpoints(ctx, svc.Name, ingress.Namespace)
+					if err != nil {
+						continue
+					}
 				}
-			} else {
-				endpoints, err = r.getServiceEndpoints(ctx, svc.Name, ingress.Namespace)
-				if err != nil {
-					continue
-				}
+
+				simps = append(simps, envoy.SimpleEnvoyConfig{
+					ClusterName: clusterName,
+					Port:        uint32(port),
+					PathPrefix:  path,
+					Endpoints:   endpoints,
+				})
 			}
-
-			simps = append(simps, envoy.SimpleEnvoyConfig{
-				ClusterName: clusterName,
-				Port:        uint32(port),
-				PathPrefix:  path,
-				Endpoints:   endpoints,
-			})
 		}
 	}
 
-	params := envoy.GenerateSnapshotParams{
+	params := &envoy.GenerateSnapshotParams{
 		Version:            version,
 		SimpleEnvoyConfigs: simps,
 		ListenerName:       envoy.ListenerName,
 		RouteName:          envoy.RouteName,
 	}
 
-	snapshot := envoy.GenerateSnapshot(params)
+	return params, nil
+}
+
+func (r *IngressReconciler) reconcile(ctx context.Context, ingress *networkingv1.Ingress) (ctrl.Result, error) {
+
+	// delta
+	params, err := r.buildSimpleEnvoyConfig(ctx)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	snapshot := envoy.GenerateSnapshot(*params)
 
 	err = envoy.SetSnapshot(ctx, r.NodeID, r.SnapshotCache, snapshot)
 	if err != nil {
@@ -162,7 +179,7 @@ func (r *IngressReconciler) getXDSVersionFromConfigMap(ctx context.Context) (str
 		return "", err
 	}
 
-	return cm.Data["version"], nil
+	return cm.Data[xDSVersionMapKeyName], nil
 }
 
 func (r *IngressReconciler) getServiceClusterIP(ctx context.Context, serviceName string, namespace string) ([]string, error) {
@@ -176,6 +193,15 @@ func (r *IngressReconciler) getServiceClusterIP(ctx context.Context, serviceName
 	}
 
 	return []string{svc.Spec.ClusterIP}, nil
+}
+
+func (r *IngressReconciler) getAllIngresses(ctx context.Context) (*networkingv1.IngressList, error) {
+	ingressList := &networkingv1.IngressList{}
+	if err := r.Client.List(context.TODO(), ingressList); err != nil {
+		return nil, nil
+	}
+
+	return ingressList, nil
 }
 
 func (r *IngressReconciler) getServiceEndpoints(ctx context.Context, serviceName string, namespace string) ([]string, error) {
@@ -219,11 +245,11 @@ func (r *IngressReconciler) setXDSVersion(ctx context.Context) error {
 		return err
 	}
 
-	versionInt, err := strconv.Atoi(cm.Data["version"])
+	versionInt, err := strconv.Atoi(cm.Data[xDSVersionMapKeyName])
 	if err != nil {
 		return err
 	}
-	cm.Data["version"] = strconv.Itoa(versionInt + 1)
+	cm.Data[xDSVersionMapKeyName] = strconv.Itoa(versionInt + 1)
 
 	if err := r.Client.Update(ctx, cm, &client.UpdateOptions{}); err != nil {
 		return err
@@ -254,7 +280,7 @@ func ReconcilexDSVersionMap(ctx context.Context, cli client.Client) error {
 	}
 
 	cmDataMap := make(map[string]string)
-	cmDataMap["version"] = "1"
+	cmDataMap[xDSVersionMapKeyName] = "1"
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      xDSVersionMapName,
@@ -271,6 +297,24 @@ func ReconcilexDSVersionMap(ctx context.Context, cli client.Client) error {
 }
 
 func (r *IngressReconciler) reconcileDelete(ctx context.Context, ingress *networkingv1.Ingress) (ctrl.Result, error) {
+	// delta
+	params, err := r.buildSimpleEnvoyConfig(ctx)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	snapshot := envoy.GenerateSnapshot(*params)
+	err = envoy.SetSnapshot(ctx, r.NodeID, r.SnapshotCache, snapshot)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	//persist change
+	err = r.setXDSVersion(ctx)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
 	return ctrl.Result{}, nil
 }
 
