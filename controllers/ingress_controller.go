@@ -131,8 +131,11 @@ func (r *IngressReconciler) buildSimpleEnvoyConfig(ctx context.Context) (*envoy.
 				simps = append(simps, envoy.SimpleEnvoyConfig{
 					ClusterName: clusterName,
 					Port:        uint32(port),
-					PathPrefix:  path,
-					Endpoints:   endpoints,
+					Path: envoy.SimpleEnvoyPath{
+						Value: path,
+						Type:  envoy.SimpleEnvoyPathTypePrefix,
+					},
+					Endpoints: endpoints,
 				})
 			}
 		}

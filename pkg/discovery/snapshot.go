@@ -74,13 +74,22 @@ func makeEndpoint(clusterName string, port uint32, endpoints []string) *endpoint
 
 func makeRoute(routeName string, simps []SimpleEnvoyConfig) *route.RouteConfiguration {
 	routes := []*route.Route{}
+
 	for _, simp := range simps {
+
+		match := &route.RouteMatch{}
+		if simp.Path.Type == SimpleEnvoyPathTypeMatch {
+			match.PathSpecifier = &route.RouteMatch_Path{
+				Path: simp.Path.Value,
+			}
+		} else {
+			match.PathSpecifier = &route.RouteMatch_Prefix{
+				Prefix: simp.Path.Value,
+			}
+		}
+
 		routes = append(routes, &route.Route{
-			Match: &route.RouteMatch{
-				PathSpecifier: &route.RouteMatch_Prefix{
-					Prefix: simp.PathPrefix,
-				},
-			},
+			Match: match,
 			Action: &route.Route_Route{
 				Route: &route.RouteAction{
 					ClusterSpecifier: &route.RouteAction_Cluster{
@@ -166,10 +175,22 @@ func makeConfigSource() *core.ConfigSource {
 	return source
 }
 
+type SimpleEnvoyPathType string
+
+const (
+	SimpleEnvoyPathTypePrefix SimpleEnvoyPathType = "Prefix"
+	SimpleEnvoyPathTypeMatch  SimpleEnvoyPathType = "Match"
+)
+
+type SimpleEnvoyPath struct {
+	Value string
+	Type  SimpleEnvoyPathType
+}
+
 type SimpleEnvoyConfig struct {
 	Port        uint32
 	ClusterName string
-	PathPrefix  string
+	Path        SimpleEnvoyPath
 	Endpoints   []string
 }
 

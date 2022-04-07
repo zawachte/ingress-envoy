@@ -44,7 +44,10 @@ func (es *EnvoyServer) Serve(ctx context.Context) error {
 	simp := SimpleEnvoyConfig{
 		ClusterName: ClusterName,
 		Port:        uint32(1000),
-		PathPrefix:  "/",
+		Path: SimpleEnvoyPath{
+			Value: "/",
+			Type:  SimpleEnvoyPathTypePrefix,
+		},
 	}
 
 	params := GenerateSnapshotParams{
