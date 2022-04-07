@@ -10,6 +10,7 @@ import (
 type ProxyConfig struct {
 	Filename           string
 	Node               string
+	ClusterName        string
 	LogLevel           string
 	ComponentLogLevel  string
 	NodeIPs            []string
@@ -27,6 +28,10 @@ type ProxyConfig struct {
 	StatNameLength     string
 	ServiceCluster     string
 }
+
+const (
+	defaultFileName = "envoy_config.yaml"
+)
 
 type proxy struct {
 	ProxyConfig
@@ -59,6 +64,10 @@ func NewProxy(cfg ProxyConfig) Proxy {
 		args = append(args, "--component-log-level", cfg.ComponentLogLevel)
 	}
 
+	if cfg.Filename == "" {
+		cfg.Filename = defaultFileName
+	}
+
 	return &proxy{
 		ProxyConfig: cfg,
 		extraArgs:   args,
@@ -78,7 +87,10 @@ func (e *proxy) Run(config interface{}, epoch int, abort <-chan error) error {
 		return err
 	}
 
-	err = ut.Execute(os.Stdout, u)
+	err = ut.Execute(f, ut)
+	if err != nil {
+		return err
+	}
 
 	args := e.args(e.Filename, epoch)
 

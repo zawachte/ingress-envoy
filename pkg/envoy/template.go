@@ -1,7 +1,6 @@
 package envoy
 
-const template = ```
-# Base config for a split xDS management server on 18000, admin port on 19000
+const envoyTemplate = `# Base config for a split xDS management server on 18000, admin port on 19000
 admin:
   access_log_path: /dev/null
   address:
@@ -29,7 +28,7 @@ dynamic_resources:
       set_node_on_first_message_only: true
 node:
   cluster: {{ .ClusterName }}
-  id: {{ .NodeID }}
+  id: {{ .Node }}
 static_resources:
   clusters:
   - connect_timeout: 1s
@@ -69,4 +68,4 @@ layered_runtime:
               envoy_grpc:
                 cluster_name: xds_cluster
         name: runtime-0
-```
+`

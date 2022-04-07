@@ -19,8 +19,8 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"os"
-
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
 
@@ -86,8 +86,8 @@ func main() {
 	}()
 
 	pc := envoy.ProxyConfig{
-		Filename: "envoy_config.yaml",
-		Node:     nodeID,
+		Node:        nodeID,
+		ClusterName: fmt.Sprintf("%s-cluster", nodeID),
 	}
 
 	proxy := envoy.NewProxy(pc)
