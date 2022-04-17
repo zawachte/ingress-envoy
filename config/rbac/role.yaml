@@ -56,20 +56,6 @@ rules:
 - apiGroups:
   - networking.k8s.io
   resources:
-  - ingressclasses/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - networking.k8s.io
-  resources:
-  - ingressclasses/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - networking.k8s.io
-  resources:
   - ingresses
   verbs:
   - create

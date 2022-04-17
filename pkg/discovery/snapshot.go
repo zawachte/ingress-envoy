@@ -2,10 +2,8 @@ package discovery
 
 import (
 	"context"
+	"strings"
 	"time"
-
-	"google.golang.org/protobuf/types/known/anypb"
-	"google.golang.org/protobuf/types/known/durationpb"
 
 	cluster "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
@@ -13,10 +11,13 @@ import (
 	listener "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	route "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
+	v32 "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
 	"github.com/envoyproxy/go-control-plane/pkg/cache/types"
 	"github.com/envoyproxy/go-control-plane/pkg/cache/v3"
 	"github.com/envoyproxy/go-control-plane/pkg/resource/v3"
 	"github.com/envoyproxy/go-control-plane/pkg/wellknown"
+	"google.golang.org/protobuf/types/known/anypb"
+	"google.golang.org/protobuf/types/known/durationpb"
 )
 
 const (
@@ -72,44 +73,67 @@ func makeEndpoint(clusterName string, port uint32, endpoints []string) *endpoint
 
 }
 
-func makeRoute(routeName string, simps []SimpleEnvoyConfig) *route.RouteConfiguration {
-	routes := []*route.Route{}
+func makeRoute(routeName string, simpMap map[string][]SimpleEnvoyConfig) *route.RouteConfiguration {
 
-	for _, simp := range simps {
-
-		match := &route.RouteMatch{}
-		if simp.Path.Type == SimpleEnvoyPathTypeMatch {
-			match.PathSpecifier = &route.RouteMatch_Path{
-				Path: simp.Path.Value,
+	virtualHosts := []*route.VirtualHost{}
+	for key, value := range simpMap {
+		routes := []*route.Route{}
+		for _, simp := range value {
+			match := &route.RouteMatch{}
+			if simp.Path.Type == SimpleEnvoyPathTypeMatch {
+				match.PathSpecifier = &route.RouteMatch_Path{
+					Path: simp.Path.Value,
+				}
+			} else {
+				match.PathSpecifier = &route.RouteMatch_Prefix{
+					Prefix: simp.Path.Value,
+				}
 			}
-		} else {
-			match.PathSpecifier = &route.RouteMatch_Prefix{
-				Prefix: simp.Path.Value,
-			}
-		}
 
-		routes = append(routes, &route.Route{
-			Match: match,
-			Action: &route.Route_Route{
+			action := &route.Route_Route{
 				Route: &route.RouteAction{
 					ClusterSpecifier: &route.RouteAction_Cluster{
 						Cluster: simp.ClusterName,
 					},
-					HostRewriteSpecifier: &route.RouteAction_HostRewriteLiteral{
-						HostRewriteLiteral: UpstreamHost,
-					},
 				},
-			},
+			}
+
+			if simp.Path.RewriteRegex != "" {
+				regexRewrite := &v32.RegexMatchAndSubstitute{
+					Pattern: &v32.RegexMatcher{
+						Regex: simp.Path.Value,
+						EngineType: &v32.RegexMatcher_GoogleRe2{
+							GoogleRe2: &v32.RegexMatcher_GoogleRE2{},
+						},
+					},
+					Substitution: simp.Path.RewriteRegex,
+				}
+
+				action.Route.RegexRewrite = regexRewrite
+			}
+
+			routes = append(routes, &route.Route{
+				Match:  match,
+				Action: action,
+			})
+		}
+
+		name := "wildcard_service"
+		if key != "*" {
+			partialReplacement := strings.ReplaceAll(key, ".", "_")
+			name = strings.ReplaceAll(partialReplacement, "*", "wildcard")
+		}
+
+		virtualHosts = append(virtualHosts, &route.VirtualHost{
+			Name:    name,
+			Domains: []string{key},
+			Routes:  routes,
 		})
 	}
 
 	return &route.RouteConfiguration{
-		Name: routeName,
-		VirtualHosts: []*route.VirtualHost{{
-			Name:    "local_service",
-			Domains: []string{"*"},
-			Routes:  routes,
-		}},
+		Name:         routeName,
+		VirtualHosts: virtualHosts,
 	}
 }
 
@@ -183,8 +207,9 @@ const (
 )
 
 type SimpleEnvoyPath struct {
-	Value string
-	Type  SimpleEnvoyPathType
+	Value        string
+	Type         SimpleEnvoyPathType
+	RewriteRegex string
 }
 
 type SimpleEnvoyConfig struct {
@@ -195,21 +220,23 @@ type SimpleEnvoyConfig struct {
 }
 
 type GenerateSnapshotParams struct {
-	Version            string
-	SimpleEnvoyConfigs []SimpleEnvoyConfig
-	RouteName          string
-	ListenerName       string
+	Version              string
+	SimpleEnvoyConfigMap map[string][]SimpleEnvoyConfig
+	RouteName            string
+	ListenerName         string
 }
 
 func GenerateSnapshot(params GenerateSnapshotParams) *cache.Snapshot {
 
 	snapShotMap := make(map[resource.Type][]types.Resource)
 
-	for _, simp := range params.SimpleEnvoyConfigs {
-		snapShotMap[resource.ClusterType] = append(snapShotMap[resource.ClusterType], makeCluster(simp.ClusterName, simp.Port, simp.Endpoints))
+	for _, simpList := range params.SimpleEnvoyConfigMap {
+		for _, simp := range simpList {
+			snapShotMap[resource.ClusterType] = append(snapShotMap[resource.ClusterType], makeCluster(simp.ClusterName, simp.Port, simp.Endpoints))
+		}
 	}
 
-	snapShotMap[resource.RouteType] = append(snapShotMap[resource.RouteType], makeRoute(params.RouteName, params.SimpleEnvoyConfigs))
+	snapShotMap[resource.RouteType] = append(snapShotMap[resource.RouteType], makeRoute(params.RouteName, params.SimpleEnvoyConfigMap))
 	snapShotMap[resource.ListenerType] = append(snapShotMap[resource.ListenerType], makeHTTPListener(params.ListenerName, params.RouteName))
 
 	snap, _ := cache.NewSnapshot(params.Version, snapShotMap)

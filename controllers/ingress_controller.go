@@ -46,11 +46,14 @@ type IngressReconciler struct {
 }
 
 const (
-	xDSVersionMapName    = "version-map"
-	xDSVersionMapKeyName = "version"
+	xDSVersionMapName        = "version-map"
+	xDSVersionMapKeyName     = "version"
+	envoyIngressLabel        = "networking.k8s.io/ingress-envoy-controller"
+	rewriteTargetAnnotations = "envoy.ingress.kubernetes.io/rewrite-target"
 )
 
 //+kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=networking.k8s.io,resources=ingressclasses,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses/finalizers,verbs=update
 //+kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
@@ -79,6 +82,22 @@ func (r *IngressReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, err
 	}
 
+	if ingress.Spec.IngressClassName != nil {
+		ingressClassKey := client.ObjectKey{
+			Namespace: ingress.Namespace,
+			Name:      *ingress.Spec.IngressClassName,
+		}
+
+		ingressClass := &networkingv1.IngressClass{}
+		if err := r.Client.Get(ctx, ingressClassKey, ingressClass); err != nil {
+			return ctrl.Result{}, err
+		}
+
+		if ingressClass.Spec.Controller != envoyIngressLabel {
+			return ctrl.Result{}, nil
+		}
+	}
+
 	// Initialize the patch helper.
 	//patchHelper, err := patch.NewHelper(ingress, r.Client)
 	//if err != nil {
@@ -100,7 +119,7 @@ func (r *IngressReconciler) buildSimpleEnvoyConfig(ctx context.Context) (*envoy.
 		return nil, err
 	}
 
-	simps := []envoy.SimpleEnvoyConfig{}
+	simpMap := make(map[string][]envoy.SimpleEnvoyConfig)
 
 	ingressList, err := r.getAllIngresses(ctx)
 	if err != nil {
@@ -128,12 +147,24 @@ func (r *IngressReconciler) buildSimpleEnvoyConfig(ctx context.Context) (*envoy.
 					}
 				}
 
-				simps = append(simps, envoy.SimpleEnvoyConfig{
+				rewrite := ""
+				val, ok := ingress.ObjectMeta.Annotations[rewriteTargetAnnotations]
+				if ok {
+					rewrite = val
+				}
+
+				hostName := "*"
+				if rule.Host != "" {
+					hostName = rule.Host
+				}
+
+				simpMap[hostName] = append(simpMap[hostName], envoy.SimpleEnvoyConfig{
 					ClusterName: clusterName,
 					Port:        uint32(port),
 					Path: envoy.SimpleEnvoyPath{
-						Value: path,
-						Type:  envoy.SimpleEnvoyPathTypePrefix,
+						Value:        path,
+						Type:         envoy.SimpleEnvoyPathTypePrefix,
+						RewriteRegex: rewrite,
 					},
 					Endpoints: endpoints,
 				})
@@ -142,10 +173,10 @@ func (r *IngressReconciler) buildSimpleEnvoyConfig(ctx context.Context) (*envoy.
 	}
 
 	params := &envoy.GenerateSnapshotParams{
-		Version:            version,
-		SimpleEnvoyConfigs: simps,
-		ListenerName:       envoy.ListenerName,
-		RouteName:          envoy.RouteName,
+		Version:              version,
+		SimpleEnvoyConfigMap: simpMap,
+		ListenerName:         envoy.ListenerName,
+		RouteName:            envoy.RouteName,
 	}
 
 	return params, nil
@@ -177,7 +208,7 @@ func (r *IngressReconciler) reconcile(ctx context.Context, ingress *networkingv1
 
 func (r *IngressReconciler) getXDSVersionFromConfigMap(ctx context.Context) (string, error) {
 
-	cm, err := GetxDSConfigMap(ctx, r.Client)
+	cm, err := ReconcilexDSVersionMap(ctx, r.Client)
 	if err != nil {
 		return "", err
 	}
@@ -275,11 +306,14 @@ func GetxDSConfigMap(ctx context.Context, cli client.Client) (*corev1.ConfigMap,
 	return cm, nil
 }
 
-func ReconcilexDSVersionMap(ctx context.Context, cli client.Client) error {
+func ReconcilexDSVersionMap(ctx context.Context, cli client.Client) (*corev1.ConfigMap, error) {
 
-	_, err := GetxDSConfigMap(ctx, cli)
+	xDSVersionMap, err := GetxDSConfigMap(ctx, cli)
 	if err == nil {
-		return nil
+		return xDSVersionMap, nil
+	}
+	if !apierrors.IsNotFound(err) {
+		return nil, err
 	}
 
 	cmDataMap := make(map[string]string)
@@ -293,10 +327,10 @@ func ReconcilexDSVersionMap(ctx context.Context, cli client.Client) error {
 	}
 
 	if err := cli.Create(ctx, cm); err != nil {
-		return err
+		return nil, err
 	}
 
-	return nil
+	return cm, nil
 }
 
 func (r *IngressReconciler) reconcileDelete(ctx context.Context, ingress *networkingv1.Ingress) (ctrl.Result, error) {
