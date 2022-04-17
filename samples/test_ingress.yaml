@@ -2,7 +2,10 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: sample-ingress
+  annotations:
+    envoy.ingress.kubernetes.io/rewrite-target: "/get"
 spec:
+  ingressClassName: ingress-envoy
   rules:
   - http:
       paths:

@@ -1,7 +1,6 @@
 package envoy
 
 import (
-	"fmt"
 	"html/template"
 	"net"
 	"os"
@@ -88,7 +87,12 @@ func (e *proxy) Run(config interface{}, epoch int, abort <-chan error) error {
 		return err
 	}
 
-	err = ut.Execute(f, ut)
+	err = ut.Execute(f, e)
+	if err != nil {
+		return err
+	}
+
+	err = f.Close()
 	if err != nil {
 		return err
 	}
@@ -123,12 +127,12 @@ func (e *proxy) args(fname string, epoch int) []string {
 
 	proxyLocalAddressType := "v4"
 	startupArgs := []string{"-c", fname,
-		"--restart-epoch", fmt.Sprint(epoch),
+		//	"--restart-epoch", fmt.Sprint(epoch),
 		"--service-cluster", e.ServiceCluster,
 		"--service-node", e.Node,
 		//	"--max-obj-name-len", fmt.Sprint(e.StatNameLength),
 		"--local-address-ip-version", proxyLocalAddressType,
-		"--log-format", fmt.Sprintf("[Envoy (Epoch %d)] ", epoch) + "[%Y-%m-%d %T.%e][%t][%l][%n] %v",
+		//"--log-format", fmt.Sprintf("[Envoy (Epoch %d)] ", epoch) + "[%Y-%m-%d %T.%e][%t][%l][%n] %v",
 	}
 
 	startupArgs = append(startupArgs, e.extraArgs...)
