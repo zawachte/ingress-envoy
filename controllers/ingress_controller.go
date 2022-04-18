@@ -19,7 +19,6 @@ package controllers
 import (
 	"context"
 	"fmt"
-	"strconv"
 
 	"github.com/envoyproxy/go-control-plane/pkg/cache/v3"
 	corev1 "k8s.io/api/core/v1"
@@ -29,6 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	envoy "k8s.io/ingress-envoy/pkg/discovery"
+	"sigs.k8s.io/cluster-api/util/patch"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -43,11 +43,11 @@ type IngressReconciler struct {
 	NodeID        string
 	SnapshotCache cache.SnapshotCache
 	ServiceMode   bool
+	ServiceName   string
+	Namespace     string
 }
 
 const (
-	xDSVersionMapName        = "version-map"
-	xDSVersionMapKeyName     = "version"
 	envoyIngressLabel        = "networking.k8s.io/ingress-envoy-controller"
 	rewriteTargetAnnotations = "envoy.ingress.kubernetes.io/rewrite-target"
 )
@@ -98,12 +98,6 @@ func (r *IngressReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		}
 	}
 
-	// Initialize the patch helper.
-	//patchHelper, err := patch.NewHelper(ingress, r.Client)
-	//if err != nil {
-	//	return ctrl.Result{}, err
-	//}
-
 	// Handle deletion reconciliation loop.
 	if !ingress.ObjectMeta.DeletionTimestamp.IsZero() {
 		return r.reconcileDelete(ctx, ingress)
@@ -112,12 +106,7 @@ func (r *IngressReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	return r.reconcile(ctx, ingress)
 }
 
-func (r *IngressReconciler) buildSimpleEnvoyConfig(ctx context.Context) (*envoy.GenerateSnapshotParams, error) {
-
-	version, err := r.getXDSVersionFromConfigMap(ctx)
-	if err != nil {
-		return nil, err
-	}
+func (r *IngressReconciler) buildSimpleEnvoyConfig(ctx context.Context, version string) (*envoy.GenerateSnapshotParams, error) {
 
 	simpMap := make(map[string][]envoy.SimpleEnvoyConfig)
 
@@ -127,6 +116,10 @@ func (r *IngressReconciler) buildSimpleEnvoyConfig(ctx context.Context) (*envoy.
 	}
 
 	for _, ingress := range ingressList.Items {
+		if !ingress.ObjectMeta.DeletionTimestamp.IsZero() {
+			continue
+		}
+
 		for _, rule := range ingress.Spec.Rules {
 			for _, path := range rule.HTTP.Paths {
 				svc := path.Backend.Service
@@ -184,8 +177,8 @@ func (r *IngressReconciler) buildSimpleEnvoyConfig(ctx context.Context) (*envoy.
 
 func (r *IngressReconciler) reconcile(ctx context.Context, ingress *networkingv1.Ingress) (ctrl.Result, error) {
 
-	// delta
-	params, err := r.buildSimpleEnvoyConfig(ctx)
+	version := fmt.Sprintf("%s-%s", ingress.UID, ingress.ResourceVersion)
+	params, err := r.buildSimpleEnvoyConfig(ctx, version)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -197,32 +190,41 @@ func (r *IngressReconciler) reconcile(ctx context.Context, ingress *networkingv1
 		return ctrl.Result{}, err
 	}
 
-	//persist change
-	err = r.setXDSVersion(ctx)
+	svc, err := r.getService(ctx, r.ServiceName, r.Namespace)
 	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	patchHelper, err := patch.NewHelper(ingress, r.Client)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	ingress.Status.LoadBalancer = svc.Status.LoadBalancer
+
+	if err := patchHelper.Patch(ctx, ingress); err != nil {
 		return ctrl.Result{}, err
 	}
 
 	return ctrl.Result{}, nil
 }
 
-func (r *IngressReconciler) getXDSVersionFromConfigMap(ctx context.Context) (string, error) {
-
-	cm, err := ReconcilexDSVersionMap(ctx, r.Client)
-	if err != nil {
-		return "", err
-	}
-
-	return cm.Data[xDSVersionMapKeyName], nil
-}
-
-func (r *IngressReconciler) getServiceClusterIP(ctx context.Context, serviceName string, namespace string) ([]string, error) {
+func (r *IngressReconciler) getService(ctx context.Context, serviceName string, namespace string) (*corev1.Service, error) {
 	svc := &corev1.Service{}
 	key := client.ObjectKey{
 		Name:      serviceName,
 		Namespace: namespace,
 	}
 	if err := r.Client.Get(ctx, key, svc); err != nil {
+		return nil, err
+	}
+
+	return svc, nil
+}
+
+func (r *IngressReconciler) getServiceClusterIP(ctx context.Context, serviceName string, namespace string) ([]string, error) {
+	svc, err := r.getService(ctx, serviceName, namespace)
+	if err != nil {
 		return nil, err
 	}
 
@@ -272,82 +274,16 @@ func (r *IngressReconciler) getServiceEndpoints(ctx context.Context, serviceName
 	return returnEndpoints, nil
 }
 
-func (r *IngressReconciler) setXDSVersion(ctx context.Context) error {
-
-	cm, err := GetxDSConfigMap(ctx, r.Client)
-	if err != nil {
-		return err
-	}
-
-	versionInt, err := strconv.Atoi(cm.Data[xDSVersionMapKeyName])
-	if err != nil {
-		return err
-	}
-	cm.Data[xDSVersionMapKeyName] = strconv.Itoa(versionInt + 1)
-
-	if err := r.Client.Update(ctx, cm, &client.UpdateOptions{}); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func GetxDSConfigMap(ctx context.Context, cli client.Client) (*corev1.ConfigMap, error) {
-	cm := &corev1.ConfigMap{}
-	key := client.ObjectKey{
-		Name:      xDSVersionMapName,
-		Namespace: "ingress-envoy-system",
-	}
-
-	if err := cli.Get(ctx, key, cm); err != nil {
-		return nil, err
-	}
-
-	return cm, nil
-}
-
-func ReconcilexDSVersionMap(ctx context.Context, cli client.Client) (*corev1.ConfigMap, error) {
-
-	xDSVersionMap, err := GetxDSConfigMap(ctx, cli)
-	if err == nil {
-		return xDSVersionMap, nil
-	}
-	if !apierrors.IsNotFound(err) {
-		return nil, err
-	}
-
-	cmDataMap := make(map[string]string)
-	cmDataMap[xDSVersionMapKeyName] = "1"
-	cm := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      xDSVersionMapName,
-			Namespace: "ingress-envoy-system",
-		},
-		Data: cmDataMap,
-	}
-
-	if err := cli.Create(ctx, cm); err != nil {
-		return nil, err
-	}
-
-	return cm, nil
-}
-
 func (r *IngressReconciler) reconcileDelete(ctx context.Context, ingress *networkingv1.Ingress) (ctrl.Result, error) {
-	// delta
-	params, err := r.buildSimpleEnvoyConfig(ctx)
+
+	version := fmt.Sprintf("%s-%s", ingress.UID, ingress.ResourceVersion)
+	params, err := r.buildSimpleEnvoyConfig(ctx, version)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
 	snapshot := envoy.GenerateSnapshot(*params)
 	err = envoy.SetSnapshot(ctx, r.NodeID, r.SnapshotCache, snapshot)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-
-	//persist change
-	err = r.setXDSVersion(ctx)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
