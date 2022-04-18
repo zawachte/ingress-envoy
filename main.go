@@ -19,7 +19,6 @@ package main
 import (
 	"context"
 	"flag"
-	"fmt"
 	"os"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -57,9 +56,16 @@ func main() {
 	var probeAddr string
 	var serviceMode bool
 	var nodeID string
+	var clusterID string
+	var namespace string
+	var serviceName string
+
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
-	flag.StringVar(&nodeID, "node-id", "ingress-envoy-0", "The node id")
+	flag.StringVar(&nodeID, "node-id", "ingress-envoy-0", "The envoy node id")
+	flag.StringVar(&clusterID, "cluster-id", "ingress-envoy", "The envoy cluster id")
+	flag.StringVar(&namespace, "namespace", "ingress-envoy-system", "The namespace the controller is running in")
+	flag.StringVar(&serviceName, "service-name", "ingress-envoy-controller-manager", "The service name in front of the ingress controller")
 	flag.BoolVar(&serviceMode, "service-mode", false, "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
@@ -88,7 +94,7 @@ func main() {
 
 	pc := envoy.ProxyConfig{
 		Node:        nodeID,
-		ClusterName: fmt.Sprintf("%s-cluster", nodeID),
+		ClusterName: clusterID,
 	}
 
 	proxy := envoy.NewProxy(pc)
@@ -122,6 +128,8 @@ func main() {
 		NodeID:        nodeID,
 		SnapshotCache: envoyServer.GetSnapshotCache(),
 		ServiceMode:   serviceMode,
+		Namespace:     namespace,
+		ServiceName:   serviceName,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Ingress")
 		os.Exit(1)

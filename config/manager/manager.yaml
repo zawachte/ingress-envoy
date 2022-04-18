@@ -27,8 +27,16 @@ spec:
       containers:
       - command:
         - /manager
-#        args:
-#        - --leader-elect
+        args:
+ #       - --leader-elect
+        - --node-id
+        - "$(POD_NAME)"
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.name
         image: controller:latest
         name: manager
         securityContext:
