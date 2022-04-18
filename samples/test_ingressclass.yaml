@@ -4,7 +4,3 @@ metadata:
   name: ingress-envoy
 spec:
   controller: networking.k8s.io/ingress-envoy-controller
-  parameters:
-    apiGroup: k8s.example.com
-    kind: IngressParameters
-    name: external-lb
