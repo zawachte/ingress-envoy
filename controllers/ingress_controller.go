@@ -18,6 +18,7 @@ package controllers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/envoyproxy/go-control-plane/pkg/cache/v3"
@@ -59,6 +60,7 @@ const (
 //+kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -115,9 +117,19 @@ func (r *IngressReconciler) buildSimpleEnvoyConfig(ctx context.Context, version 
 		return nil, err
 	}
 
+	tlsConfigs := []envoy.TLSConfig{}
 	for _, ingress := range ingressList.Items {
 		if !ingress.ObjectMeta.DeletionTimestamp.IsZero() {
 			continue
+		}
+
+		for _, tls := range ingress.Spec.TLS {
+			tlsConfig, err := r.tlsSecretToEnvoyTLSConfig(ctx, tls.SecretName, ingress.Namespace)
+			if err != nil {
+				return nil, err
+			}
+
+			tlsConfigs = append(tlsConfigs, tlsConfig)
 		}
 
 		for _, rule := range ingress.Spec.Rules {
@@ -168,8 +180,18 @@ func (r *IngressReconciler) buildSimpleEnvoyConfig(ctx context.Context, version 
 	params := &envoy.GenerateSnapshotParams{
 		Version:              version,
 		SimpleEnvoyConfigMap: simpMap,
-		ListenerName:         envoy.ListenerName,
-		RouteName:            envoy.RouteName,
+		ListenerConfigs: []envoy.SimpleListenerConfig{
+			{
+				ListenerName: envoy.ListenerNameHTTP,
+				ListenerPort: envoy.ListenerPortHTTP,
+			},
+			{
+				ListenerName: envoy.ListenerNameHTTPS,
+				ListenerPort: envoy.ListenerPortHTTPS,
+				TLSConfig:    &tlsConfigs,
+			},
+		},
+		RouteName: envoy.RouteName,
 	}
 
 	return params, nil
@@ -183,7 +205,10 @@ func (r *IngressReconciler) reconcile(ctx context.Context, ingress *networkingv1
 		return ctrl.Result{}, err
 	}
 
-	snapshot := envoy.GenerateSnapshot(*params)
+	snapshot, err := envoy.GenerateSnapshot(*params)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
 
 	err = envoy.SetSnapshot(ctx, r.NodeID, r.SnapshotCache, snapshot)
 	if err != nil {
@@ -220,6 +245,33 @@ func (r *IngressReconciler) getService(ctx context.Context, serviceName string, 
 	}
 
 	return svc, nil
+}
+
+func (r *IngressReconciler) tlsSecretToEnvoyTLSConfig(ctx context.Context, secretName string, namespace string) (envoy.TLSConfig, error) {
+	secret := &corev1.Secret{}
+	key := client.ObjectKey{
+		Name:      secretName,
+		Namespace: namespace,
+	}
+
+	if err := r.Client.Get(ctx, key, secret); err != nil {
+		return envoy.TLSConfig{}, err
+	}
+
+	cert, ok := secret.Data[corev1.TLSCertKey]
+	if !ok {
+		return envoy.TLSConfig{}, errors.New("invalid TLS secret")
+	}
+
+	privKey, ok := secret.Data[corev1.TLSPrivateKeyKey]
+	if !ok {
+		return envoy.TLSConfig{}, errors.New("invalid TLS secret")
+	}
+
+	return envoy.TLSConfig{
+		PrivateKeyString:  string(privKey),
+		CertificateString: string(cert),
+	}, nil
 }
 
 func (r *IngressReconciler) getServiceClusterIP(ctx context.Context, serviceName string, namespace string) ([]string, error) {
@@ -282,7 +334,11 @@ func (r *IngressReconciler) reconcileDelete(ctx context.Context, ingress *networ
 		return ctrl.Result{}, err
 	}
 
-	snapshot := envoy.GenerateSnapshot(*params)
+	snapshot, err := envoy.GenerateSnapshot(*params)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
 	err = envoy.SetSnapshot(ctx, r.NodeID, r.SnapshotCache, snapshot)
 	if err != nil {
 		return ctrl.Result{}, err
