@@ -142,20 +142,7 @@ func makeRoute(routeName string, simpMap map[string][]SimpleEnvoyConfig) *route.
 
 func makeHTTPListener(listenerName string, listenerPort uint32, route string) (*listener.Listener, error) {
 	// HTTP filter configuration
-	manager := &hcm.HttpConnectionManager{
-		CodecType:  hcm.HttpConnectionManager_AUTO,
-		StatPrefix: "http",
-		RouteSpecifier: &hcm.HttpConnectionManager_Rds{
-			Rds: &hcm.Rds{
-				ConfigSource:    makeConfigSource(),
-				RouteConfigName: route,
-			},
-		},
-		HttpFilters: []*hcm.HttpFilter{{
-			Name: wellknown.Router,
-		}},
-	}
-	pbst, err := anypb.New(manager)
+	pbst, err := makeHttpConnectionManager("http", route)
 	if err != nil {
 		return nil, err
 	}
@@ -184,8 +171,7 @@ func makeHTTPListener(listenerName string, listenerPort uint32, route string) (*
 	}, nil
 }
 
-func makeHTTPSListener(listenerName string, listenerPort uint32, route string, tlsConfigs []TLSConfig) (*listener.Listener, error) {
-	// HTTP filter configuration
+func makeHttpConnectionManager(statPrefix string, route string) (*anypb.Any, error) {
 	manager := &hcm.HttpConnectionManager{
 		CodecType:  hcm.HttpConnectionManager_AUTO,
 		StatPrefix: "https",
@@ -200,6 +186,16 @@ func makeHTTPSListener(listenerName string, listenerPort uint32, route string, t
 		}},
 	}
 	pbst, err := anypb.New(manager)
+	if err != nil {
+		return nil, err
+	}
+
+	return pbst, err
+}
+
+func makeHTTPSListener(listenerName string, listenerPort uint32, route string, tlsConfigs []TLSConfig) (*listener.Listener, error) {
+	// HTTP filter configuration
+	pbst, err := makeHttpConnectionManager("https", route)
 	if err != nil {
 		return nil, err
 	}
