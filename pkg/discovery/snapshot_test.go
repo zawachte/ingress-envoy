@@ -118,6 +118,7 @@ func Test_makeHTTPListener(t *testing.T) {
 	type args struct {
 		listenerName string
 		route        string
+		port         uint32
 	}
 	tests := []struct {
 		name string
@@ -128,6 +129,7 @@ func Test_makeHTTPListener(t *testing.T) {
 			args: args{
 				listenerName: "",
 				route:        "",
+				port:         80,
 			},
 		},
 		{
@@ -135,6 +137,7 @@ func Test_makeHTTPListener(t *testing.T) {
 			args: args{
 				listenerName: "",
 				route:        "",
+				port:         80,
 			},
 		},
 	}
@@ -142,7 +145,8 @@ func Test_makeHTTPListener(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			g := NewWithT(t)
 
-			listener := makeHTTPListener(tt.args.listenerName, tt.args.route)
+			listener, err := makeHTTPListener(tt.args.listenerName, tt.args.port, tt.args.route)
+			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(listener.Name).To(Equal(tt.args.listenerName))
 		})
 	}
@@ -159,13 +163,31 @@ func Test_GenerateSnapshot(t *testing.T) {
 		{
 			name: "simple snapshot",
 			args: args{
-				params: GenerateSnapshotParams{},
+				params: GenerateSnapshotParams{
+					Version:   "1",
+					RouteName: "simple_route",
+					ListenerConfigs: []SimpleListenerConfig{
+						{
+							ListenerName: "listener_name",
+							ListenerPort: 100,
+						},
+					},
+				},
 			},
 		},
 		{
 			name: "simple route 2",
 			args: args{
-				params: GenerateSnapshotParams{},
+				params: GenerateSnapshotParams{
+					Version:   "1",
+					RouteName: "simple_route",
+					ListenerConfigs: []SimpleListenerConfig{
+						{
+							ListenerName: "listener_name",
+							ListenerPort: 100,
+						},
+					},
+				},
 			},
 		},
 	}
@@ -173,7 +195,8 @@ func Test_GenerateSnapshot(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			g := NewWithT(t)
 
-			snapshot := GenerateSnapshot(tt.args.params)
+			snapshot, err := GenerateSnapshot(tt.args.params)
+			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(snapshot.Consistent()).NotTo(HaveOccurred())
 		})
 	}

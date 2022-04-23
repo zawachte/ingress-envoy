@@ -56,11 +56,20 @@ func (es *EnvoyServer) Serve(ctx context.Context) error {
 	params := GenerateSnapshotParams{
 		Version:              "1",
 		SimpleEnvoyConfigMap: simpMap,
-		ListenerName:         ListenerName,
-		RouteName:            RouteName,
+		ListenerConfigs: []SimpleListenerConfig{
+			{
+				ListenerName: ListenerNameHTTP,
+				ListenerPort: ListenerPortHTTP,
+			},
+		},
+		RouteName: RouteName,
 	}
 
-	snapshot := GenerateSnapshot(params)
+	snapshot, err := GenerateSnapshot(params)
+	if err != nil {
+		return err
+	}
+
 	if err := snapshot.Consistent(); err != nil {
 		return err
 	}

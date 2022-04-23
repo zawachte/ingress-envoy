@@ -11,6 +11,7 @@ import (
 	listener "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	route "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
+	auth "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	v32 "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
 	"github.com/envoyproxy/go-control-plane/pkg/cache/types"
 	"github.com/envoyproxy/go-control-plane/pkg/cache/v3"
@@ -21,12 +22,14 @@ import (
 )
 
 const (
-	ClusterName  = "init_cluster"
-	RouteName    = "local_route"
-	ListenerName = "listener_0"
-	ListenerPort = 80
-	UpstreamHost = "localhost"
-	UpstreamPort = 18080
+	ClusterName       = "init_cluster"
+	RouteName         = "local_route"
+	ListenerNameHTTP  = "listener_http"
+	ListenerPortHTTP  = 80
+	ListenerNameHTTPS = "listener_https"
+	ListenerPortHTTPS = 443
+	UpstreamHost      = "localhost"
+	UpstreamPort      = 18080
 )
 
 func makeCluster(clusterName string, port uint32, endpoints []string) *cluster.Cluster {
@@ -137,24 +140,11 @@ func makeRoute(routeName string, simpMap map[string][]SimpleEnvoyConfig) *route.
 	}
 }
 
-func makeHTTPListener(listenerName string, route string) *listener.Listener {
+func makeHTTPListener(listenerName string, listenerPort uint32, route string) (*listener.Listener, error) {
 	// HTTP filter configuration
-	manager := &hcm.HttpConnectionManager{
-		CodecType:  hcm.HttpConnectionManager_AUTO,
-		StatPrefix: "http",
-		RouteSpecifier: &hcm.HttpConnectionManager_Rds{
-			Rds: &hcm.Rds{
-				ConfigSource:    makeConfigSource(),
-				RouteConfigName: route,
-			},
-		},
-		HttpFilters: []*hcm.HttpFilter{{
-			Name: wellknown.Router,
-		}},
-	}
-	pbst, err := anypb.New(manager)
+	pbst, err := makeHttpConnectionManager("http", route)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 
 	return &listener.Listener{
@@ -165,7 +155,7 @@ func makeHTTPListener(listenerName string, route string) *listener.Listener {
 					Protocol: core.SocketAddress_TCP,
 					Address:  "0.0.0.0",
 					PortSpecifier: &core.SocketAddress_PortValue{
-						PortValue: ListenerPort,
+						PortValue: listenerPort,
 					},
 				},
 			},
@@ -178,7 +168,89 @@ func makeHTTPListener(listenerName string, route string) *listener.Listener {
 				},
 			}},
 		}},
+	}, nil
+}
+
+func makeHttpConnectionManager(statPrefix string, route string) (*anypb.Any, error) {
+	manager := &hcm.HttpConnectionManager{
+		CodecType:  hcm.HttpConnectionManager_AUTO,
+		StatPrefix: "https",
+		RouteSpecifier: &hcm.HttpConnectionManager_Rds{
+			Rds: &hcm.Rds{
+				ConfigSource:    makeConfigSource(),
+				RouteConfigName: route,
+			},
+		},
+		HttpFilters: []*hcm.HttpFilter{{
+			Name: wellknown.Router,
+		}},
 	}
+	pbst, err := anypb.New(manager)
+	if err != nil {
+		return nil, err
+	}
+
+	return pbst, err
+}
+
+func makeHTTPSListener(listenerName string, listenerPort uint32, route string, tlsConfigs []TLSConfig) (*listener.Listener, error) {
+	// HTTP filter configuration
+	pbst, err := makeHttpConnectionManager("https", route)
+	if err != nil {
+		return nil, err
+	}
+
+	tlsCerts := []*auth.TlsCertificate{}
+	for _, tlsConfig := range tlsConfigs {
+		tlsCerts = append(tlsCerts, &auth.TlsCertificate{
+			PrivateKey: &core.DataSource{
+				Specifier: &core.DataSource_InlineString{InlineString: tlsConfig.PrivateKeyString},
+			},
+			CertificateChain: &core.DataSource{
+				Specifier: &core.DataSource_InlineString{InlineString: tlsConfig.CertificateString},
+			},
+		})
+	}
+
+	tlsc := &auth.DownstreamTlsContext{
+		CommonTlsContext: &auth.CommonTlsContext{
+			TlsCertificates: tlsCerts,
+		},
+	}
+
+	pbtlsc, err := anypb.New(tlsc)
+	if err != nil {
+		return nil, err
+	}
+
+	return &listener.Listener{
+		Name: listenerName,
+		Address: &core.Address{
+			Address: &core.Address_SocketAddress{
+				SocketAddress: &core.SocketAddress{
+					Protocol: core.SocketAddress_TCP,
+					Address:  "0.0.0.0",
+					PortSpecifier: &core.SocketAddress_PortValue{
+						PortValue: listenerPort,
+					},
+				},
+			},
+		},
+		FilterChains: []*listener.FilterChain{{
+			Filters: []*listener.Filter{{
+				Name: wellknown.HTTPConnectionManager,
+				ConfigType: &listener.Filter_TypedConfig{
+					TypedConfig: pbst,
+				},
+			}},
+			TransportSocket: &core.TransportSocket{
+				Name: wellknown.TransportSocketTLS,
+				ConfigType: &core.TransportSocket_TypedConfig{
+					TypedConfig: pbtlsc,
+				},
+			},
+		}},
+	}, nil
 }
 
 func makeConfigSource() *core.ConfigSource {
@@ -223,10 +295,26 @@ type GenerateSnapshotParams struct {
 	Version              string
 	SimpleEnvoyConfigMap map[string][]SimpleEnvoyConfig
 	RouteName            string
-	ListenerName         string
+	ListenerConfigs      []SimpleListenerConfig
 }
 
-func GenerateSnapshot(params GenerateSnapshotParams) *cache.Snapshot {
+type HTTPListenerConfig struct {
+	ListenerName string
+	ListenerPort uint32
+}
+
+type TLSConfig struct {
+	CertificateString string
+	PrivateKeyString  string
+}
+
+type SimpleListenerConfig struct {
+	ListenerName string
+	ListenerPort uint32
+	TLSConfig    *[]TLSConfig
+}
+
+func GenerateSnapshot(params GenerateSnapshotParams) (*cache.Snapshot, error) {
 
 	snapShotMap := make(map[resource.Type][]types.Resource)
 
@@ -237,10 +325,48 @@ func GenerateSnapshot(params GenerateSnapshotParams) *cache.Snapshot {
 	}
 
 	snapShotMap[resource.RouteType] = append(snapShotMap[resource.RouteType], makeRoute(params.RouteName, params.SimpleEnvoyConfigMap))
-	snapShotMap[resource.ListenerType] = append(snapShotMap[resource.ListenerType], makeHTTPListener(params.ListenerName, params.RouteName))
 
-	snap, _ := cache.NewSnapshot(params.Version, snapShotMap)
-	return &snap
+	for _, listenerConfig := range params.ListenerConfigs {
+		listener, err := makeListener(listenerConfig, params.RouteName)
+		if err != nil {
+			return nil, err
+		}
+
+		snapShotMap[resource.ListenerType] = append(snapShotMap[resource.ListenerType], listener)
+	}
+
+	snap, err := cache.NewSnapshot(params.Version, snapShotMap)
+	if err != nil {
+		return nil, err
+	}
+
+	return &snap, nil
+}
+
+func makeListener(listenerConfig SimpleListenerConfig, routeName string) (*listener.Listener, error) {
+	var listener *listener.Listener
+	var err error
+	if listenerConfig.TLSConfig == nil {
+		listener, err = makeHTTPListener(
+			listenerConfig.ListenerName,
+			listenerConfig.ListenerPort,
+			routeName,
+		)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		listener, err = makeHTTPSListener(
+			listenerConfig.ListenerName,
+			listenerConfig.ListenerPort,
+			routeName,
+			*listenerConfig.TLSConfig)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return listener, nil
 }
 
 func SetSnapshot(ctx context.Context, nodeID string, snapshotCache cache.SnapshotCache, snapshot *cache.Snapshot) error {
