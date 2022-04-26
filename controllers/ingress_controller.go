@@ -21,7 +21,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/envoyproxy/go-control-plane/pkg/cache/v3"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -40,12 +39,11 @@ import (
 // IngressReconciler reconciles a Ingress object
 type IngressReconciler struct {
 	client.Client
-	Scheme        *runtime.Scheme
-	NodeID        string
-	SnapshotCache cache.SnapshotCache
-	ServiceMode   bool
-	ServiceName   string
-	Namespace     string
+	Scheme       *runtime.Scheme
+	EnvoyManager *envoy.EnvoyManager
+	ServiceMode  bool
+	ServiceName  string
+	Namespace    string
 }
 
 const (
@@ -210,7 +208,7 @@ func (r *IngressReconciler) reconcile(ctx context.Context, ingress *networkingv1
 		return ctrl.Result{}, err
 	}
 
-	err = envoy.SetSnapshot(ctx, r.NodeID, r.SnapshotCache, snapshot)
+	err = r.EnvoyManager.PushChanges(ctx, *snapshot)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -339,7 +337,7 @@ func (r *IngressReconciler) reconcileDelete(ctx context.Context, ingress *networ
 		return ctrl.Result{}, err
 	}
 
-	err = envoy.SetSnapshot(ctx, r.NodeID, r.SnapshotCache, snapshot)
+	err = r.EnvoyManager.PushChanges(ctx, *snapshot)
 	if err != nil {
 		return ctrl.Result{}, err
 	}

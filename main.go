@@ -78,14 +78,12 @@ func main() {
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
-	envoyDiscoveryParams := envoydiscovery.EnvoyServerParams{
-		NodeID: nodeID,
-	}
+	envoyDiscoveryParams := envoydiscovery.EnvoyServerParams{}
 
 	envoyServer := envoydiscovery.NewEnvoyServer(envoyDiscoveryParams)
 
 	go func() {
-		err := envoyServer.Serve(context.Background())
+		err := envoyServer.Serve(context.Background(), nodeID)
 		if err != nil {
 			setupLog.Error(err, "problem running envoy xds server")
 			os.Exit(1)
@@ -123,13 +121,12 @@ func main() {
 	}
 
 	if err = (&controllers.IngressReconciler{
-		Client:        mgr.GetClient(),
-		Scheme:        mgr.GetScheme(),
-		NodeID:        nodeID,
-		SnapshotCache: envoyServer.GetSnapshotCache(),
-		ServiceMode:   serviceMode,
-		Namespace:     namespace,
-		ServiceName:   serviceName,
+		Client:       mgr.GetClient(),
+		Scheme:       mgr.GetScheme(),
+		EnvoyManager: envoyServer.GetEnvoyManager(),
+		ServiceMode:  serviceMode,
+		Namespace:    namespace,
+		ServiceName:  serviceName,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Ingress")
 		os.Exit(1)
