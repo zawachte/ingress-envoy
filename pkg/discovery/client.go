@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/envoyproxy/go-control-plane/pkg/cache/v3"
-	"github.com/envoyproxy/go-control-plane/pkg/test/v3"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 
@@ -23,23 +22,23 @@ import (
 )
 
 type EnvoyServer struct {
-	nodeID        string
-	snapshotCache cache.SnapshotCache
+	envoyManager *EnvoyManager
 }
 
 type EnvoyServerParams struct {
-	NodeID string
 }
 
 func NewEnvoyServer(params EnvoyServerParams) *EnvoyServer {
-	cache := cache.NewSnapshotCache(false, cache.IDHash{}, nil)
 	return &EnvoyServer{
-		snapshotCache: cache,
-		nodeID:        params.NodeID,
+		envoyManager: newEnvoyManager(),
 	}
 }
 
-func (es *EnvoyServer) Serve(ctx context.Context) error {
+func (es *EnvoyServer) GetEnvoyManager() *EnvoyManager {
+	return es.envoyManager
+}
+
+func (es *EnvoyServer) Serve(ctx context.Context, startingNode string) error {
 	// Create the snapshot that we'll serve to Envoy
 
 	simpMap := make(map[string][]SimpleEnvoyConfig)
@@ -74,20 +73,21 @@ func (es *EnvoyServer) Serve(ctx context.Context) error {
 		return err
 	}
 
+	snapshotCache := es.envoyManager.GetSnapshotCache()
+
 	// Add the snapshot to the cache
-	if err := es.snapshotCache.SetSnapshot(ctx, es.nodeID, *snapshot); err != nil {
+	if err := snapshotCache.SetSnapshot(ctx, startingNode, *snapshot); err != nil {
 		return err
 	}
 
-	cb := &test.Callbacks{}
-	srv := server.NewServer(ctx, es.snapshotCache, cb)
+	srv := server.NewServer(ctx, snapshotCache, es.envoyManager)
 	RunServer(ctx, srv, 18000)
 
 	return nil
 }
 
-func (es *EnvoyServer) GetSnapshotCache() cache.SnapshotCache {
-	return es.snapshotCache
+func (es *EnvoyServer) PushChanges(ctx context.Context, snapshot cache.Snapshot) error {
+	return es.envoyManager.PushChanges(ctx, snapshot)
 }
 
 const (
