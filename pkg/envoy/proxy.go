@@ -1,6 +1,7 @@
 package envoy
 
 import (
+	"fmt"
 	"html/template"
 	"net"
 	"os"
@@ -50,7 +51,7 @@ type Proxy interface {
 	//	Drain() error
 
 	// Cleanup command for an epoch
-	//	Cleanup(int)
+	Cleanup(int)
 }
 
 // NewProxy creates an instance of the proxy control commands
@@ -74,8 +75,7 @@ func NewProxy(cfg ProxyConfig) Proxy {
 	}
 }
 
-func (e *proxy) Run(config interface{}, epoch int, abort <-chan error) error {
-	// spin up a new Envoy process
+func (e *proxy) generateConfigFile() error {
 
 	ut, err := template.New(e.Filename).Parse(envoyTemplate)
 	if err != nil {
@@ -97,7 +97,18 @@ func (e *proxy) Run(config interface{}, epoch int, abort <-chan error) error {
 		return err
 	}
 
+	return nil
+}
+
+func (e *proxy) Run(config interface{}, epoch int, abort <-chan error) error {
+	// spin up a new Envoy process
+
 	args := e.args(e.Filename, epoch)
+
+	err := e.generateConfigFile()
+	if err != nil {
+		return err
+	}
 
 	/* #nosec */
 	cmd := exec.Command("/usr/local/bin/envoy", args...)
@@ -127,7 +138,7 @@ func (e *proxy) args(fname string, epoch int) []string {
 
 	proxyLocalAddressType := "v4"
 	startupArgs := []string{"-c", fname,
-		//	"--restart-epoch", fmt.Sprint(epoch),
+		"--restart-epoch", fmt.Sprint(epoch),
 		"--service-cluster", e.ServiceCluster,
 		"--service-node", e.Node,
 		//	"--max-obj-name-len", fmt.Sprint(e.StatNameLength),
@@ -138,4 +149,9 @@ func (e *proxy) args(fname string, epoch int) []string {
 	startupArgs = append(startupArgs, e.extraArgs...)
 
 	return startupArgs
+}
+
+func (e *proxy) Cleanup(epoch int) {
+	if err := os.Remove(e.Filename); err != nil {
+	}
 }
