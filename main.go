@@ -99,11 +99,11 @@ func main() {
 	abortCh := make(chan error, 1)
 
 	go func() {
-		err := proxy.Run(nil, 1, abortCh)
+		err := proxy.Run(nil, 0, abortCh)
 		if err != nil {
 			panic(err)
 		}
-		//proxy.Cleanup(epoch)
+		proxy.Cleanup(0)
 		//a.statusCh <- exitStatus{epoch: epoch, err: err}
 	}()
 
